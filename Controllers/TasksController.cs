@@ -1,115 +1,105 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.Rendering;
+using taskmanager_api.DTOs;
 using taskmanager_api.Models;
 using taskmanager_api.Services;
 
 namespace taskmanager_api.Controllers;
 
 [Authorize]
-public class TasksController : Controller
+[Route("api/tasks")]
+[ApiController]
+public class TasksController : ControllerBase
 {
     private readonly ITaskService _taskService;
     private readonly IProjectService _projectService;
-    private readonly UserManager<ApplicationUser> _userManager;
 
-    public TasksController(ITaskService taskService, IProjectService projectService, UserManager<ApplicationUser> userManager)
+    public TasksController(ITaskService taskService, IProjectService projectService)
     {
         _taskService = taskService;
         _projectService = projectService;
-        _userManager = userManager;
     }
 
-    // GET: Tasks
-    public async Task<IActionResult> Index()
+    // GET: api/tasks
+    [HttpGet]
+    public async Task<IActionResult> GetAll()
     {
-        var userId = _userManager.GetUserId(User);
-        var tasks = await _taskService.GetAllAsync(userId!);
-        return View(tasks);
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var tasks = await _taskService.GetAllAsync(userId);
+        return Ok(tasks.Select(t => t.ToResponse()));
     }
 
-    // GET: Tasks/Details/5
-    public async Task<IActionResult> Details(int id)
+    // GET: api/tasks/pending
+    [HttpGet("pending")]
+    public async Task<IActionResult> GetPending()
     {
-        var task = await _taskService.GetByIdAsync(id);
-        if (task == null) return NotFound();
-        return View(task);
-    }
-
-    // GET: Tasks/Pending
-    public async Task<IActionResult> Pending()
-    {
-        var userId = _userManager.GetUserId(User)!;
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var tasks = await _taskService.GetPendingAsync(userId);
-        return View(tasks);
+        return Ok(tasks.Select(t => t.ToResponse()));
     }
 
-    // GET: Tasks/Create
-    public async Task<IActionResult> Create()
+    // GET: api/tasks/{id}
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetById(int id)
     {
-        await PopulateProjectsDropdown();
-        return View();
-    }
-
-    // POST: Tasks/Create
-    [HttpPost]
-    [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Create(TaskItem task)
-    {
-        if (!ModelState.IsValid)
-        {
-            await PopulateProjectsDropdown();
-            return View(task);
-        }
-        await _taskService.AddAsync(task);
-        return RedirectToAction(nameof(Index));
-    }
-
-    // GET: Tasks/Edit/5
-    public async Task<IActionResult> Edit(int id)
-    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var task = await _taskService.GetByIdAsync(id);
-        if (task == null) return NotFound();
-        await PopulateProjectsDropdown(task.ProjectId);
-        return View(task);
+        if (task == null || task.Project!.UserId != userId) return NotFound();
+        return Ok(task.ToResponse());
     }
 
-    // POST: Tasks/Edit/5
+    // POST: api/tasks
     [HttpPost]
-    [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Edit(TaskItem task)
+    public async Task<IActionResult> Create(TaskRequest dto)
     {
-        if (!ModelState.IsValid)
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        var project = await _projectService.GetByIdAsync(dto.ProjectId);
+        if (project == null || project.UserId != userId) return BadRequest("Projekt ne postoji ili nemate pristup.");
+
+        var task = new TaskItem
         {
-            await PopulateProjectsDropdown(task.ProjectId);
-            return View(task);
-        }
-        await _taskService.UpdateAsync(task);
-        return RedirectToAction(nameof(Index));
+            Title = dto.Title,
+            Description = dto.Description,
+            DueDate = dto.DueDate,
+            Priority = dto.Priority,
+            IsCompleted = dto.IsCompleted,
+            Notes = dto.Notes,
+            ProjectId = dto.ProjectId
+        };
+
+        await _taskService.AddAsync(task);
+        return CreatedAtAction(nameof(GetById), new { id = task.Id }, task.ToResponse());
     }
 
-    // GET: Tasks/Delete/5
+    // PUT: api/tasks/{id}
+    [HttpPut("{id}")]
+    public async Task<IActionResult> Update(int id, TaskRequest dto)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var existing = await _taskService.GetByIdAsync(id);
+        if (existing == null || existing.Project!.UserId != userId) return NotFound();
+
+        existing.Title = dto.Title;
+        existing.Description = dto.Description;
+        existing.DueDate = dto.DueDate;
+        existing.Priority = dto.Priority;
+        existing.IsCompleted = dto.IsCompleted;
+        existing.Notes = dto.Notes;
+
+        await _taskService.UpdateAsync(existing);
+        return Ok(existing.ToResponse());
+    }
+
+    // DELETE: api/tasks/{id}
+    [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(int id)
     {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var task = await _taskService.GetByIdAsync(id);
-        if (task == null) return NotFound();
-        return View(task);
-    }
-
-    // POST: Tasks/Delete/5
-    [HttpPost, ActionName("Delete")]
-    [ValidateAntiForgeryToken]
-    public async Task<IActionResult> DeleteConfirmed(int id)
-    {
+        if (task == null || task.Project!.UserId != userId) return NotFound();
         await _taskService.DeleteAsync(id);
-        return RedirectToAction(nameof(Index));
-    }
-
-    private async Task PopulateProjectsDropdown(int? selectedId = null)
-    {
-        var userId = _userManager.GetUserId(User)!;
-        var projects = await _projectService.GetAllAsync(userId);
-        ViewBag.ProjectId = new SelectList(projects, "Id", "Name", selectedId);
+        return NoContent();
     }
 }
