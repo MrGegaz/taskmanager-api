@@ -19,7 +19,6 @@ public class ProjectsController : ControllerBase
     }
 
     // GET: api/projects
-    [Authorize]
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
